@@ -1,63 +1,77 @@
 import os
 import logging
 import requests
+import pandas as pd
+import numpy as np
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
+from dotenv import load_dotenv
 
-# Configura logging per debug
+# Carica variabili ambiente (.env)
+load_dotenv()
+TOKEN = os.getenv("TOKEN")
+ALPHA_KEY = os.getenv("ALPHA_KEY")
+
+# Logging
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
-# Prendi i token dalle variabili di ambiente su Render
-TOKEN = os.getenv("TOKEN")
-ALPHA_KEY = os.getenv("ALPHA_KEY")
+# Lista utenti iscritti
+subscribers = set()
 
-# Funzione /start
+
+# ========= FUNZIONI BOT ========= #
+
+# /start -> iscrive utente
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("🚀 Pocket Option Signals Bot attivo!\nRiceverai segnali qui.")
+    user_id = update.effective_chat.id
+    subscribers.add(user_id)
+    await update.message.reply_text("✅ Sei iscritto ai segnali di Pocket Option!")
 
-# Funzione per controllare segnali (simulazione esempio BTC)
-async def check_signals(app):
-    try:
-        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=BTCUSD&interval=1min&apikey={ALPHA_KEY}"
-        r = requests.get(url)
-        data = r.json()
+# /stop -> disiscrive utente
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_chat.id
+    subscribers.discard(user_id)
+    await update.message.reply_text("❌ Sei stato rimosso dai segnali.")
 
-        last_refreshed = data["Meta Data"]["3. Last Refreshed"]
-        last_close = float(data["Time Series (1min)"][last_refreshed]["4. close"])
+# Funzione che simula il calcolo dei segnali
+def generate_signal(symbol="BTCUSDT"):
+    # Puoi sostituire questa parte con logica tecnica vera
+    decision = np.random.choice(["UP", "DOWN"])
+    return f"📊 Segnale per {symbol}: {decision}"
 
-        # Semplice logica UP / DOWN
-        signal = "📈 BUY" if last_close % 2 == 0 else "📉 SELL"
+# /signal -> invia un segnale manualmente
+async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    symbol = "BTCUSDT"
+    sig = generate_signal(symbol)
+    await update.message.reply_text(sig)
 
-        text = f"⚡ Segnale BTC/USD\nPrezzo: {last_close}\nSegnale: {signal}"
+# /broadcast -> invia segnale a tutti gli iscritti
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    symbol = "BTCUSDT"
+    sig = generate_signal(symbol)
 
-        # Invia a tutti (per semplicità mando al mio chat_id se startato)
-        for chat_id in app.chat_ids:
-            await app.bot.send_message(chat_id=chat_id, text=text)
+    for user_id in subscribers:
+        try:
+            await context.bot.send_message(chat_id=user_id, text=sig)
+        except Exception as e:
+            logging.error(f"Errore inviando a {user_id}: {e}")
 
-    except Exception as e:
-        logging.error(f"Errore check_signals: {e}")
 
-# Salva le chat che usano /start
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    subscribers.add(chat_id)
-    await update.message.reply_text("✅ Ti sei iscritto ai segnali Pocket Option!")
+# ========= AVVIO BOT ========= #
 
-# Main
-if __name__ == "__main__":
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Set dove salvo le chat_id
-    subscribers = set()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(CommandHandler("signal", signal))
+    app.add_handler(CommandHandler("broadcast", broadcast))
 
-    # Comandi
-    app.add_handler(CommandHandler("start", save_chat_id))
-
-    # Job: ogni 60 secondi controllo segnali
-    app.job_queue.run_repeating(lambda _: check_signals(app), interval=60, first=5)
-
-    print("✅ Bot avviato!")
     app.run_polling()
+
+
+if __name__ == "__main__":
+    main()
