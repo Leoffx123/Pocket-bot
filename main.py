@@ -1,102 +1,64 @@
 import os
 import logging
 import requests
-import pandas as pd
-import numpy as np
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from dotenv import load_dotenv
 
-# Carica le variabili da .env (su Railway le setti nelle "Variables")
-load_dotenv()
-TOKEN = os.getenv("TOKEN")
-ALPHA_KEY = os.getenv("ALPHA_KEY")
-
-# Configura logging
+# Configura logging per debug
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
-# Lista iscritti (multi-user)
-subscribers = set()
+# Prendi i token dalle variabili di ambiente su Render
+TOKEN = os.getenv("TOKEN")
+ALPHA_KEY = os.getenv("ALPHA_KEY")
 
-# Funzione per calcolare RSI
-def compute_rsi(prices, period=14):
-    delta = prices.diff()
-    gain = np.where(delta > 0, delta, 0)
-    loss = np.where(delta < 0, -delta, 0)
-    avg_gain = pd.Series(gain).rolling(window=period).mean()
-    avg_loss = pd.Series(loss).rolling(window=period).mean()
-    rs = avg_gain / avg_loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi.iloc[-1]
-
-# Ottieni dati da Alpha Vantage
-def fetch_data(symbol="EURUSD", interval="1min"):
-    url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}&interval={interval}&apikey={ALPHA_KEY}&datatype=json"
-    r = requests.get(url)
-    data = r.json()
-    if "Time Series FX (1min)" not in data:
-        return None
-    df = pd.DataFrame(data["Time Series FX (1min)"]).T.astype(float)
-    df = df.rename(columns={
-        "1. open": "open",
-        "2. high": "high",
-        "3. low": "low",
-        "4. close": "close"
-    })
-    return df
-
-# Genera segnale RSI
-def get_signal(symbol="EURUSD"):
-    df = fetch_data(symbol)
-    if df is None:
-        return None
-    rsi = compute_rsi(df["close"])
-    if rsi < 30:
-        return f"📉 SELL Signal on {symbol} (RSI={rsi:.2f})"
-    elif rsi > 70:
-        return f"📈 BUY Signal on {symbol} (RSI={rsi:.2f})"
-    else:
-        return None
-
-# /start
+# Funzione /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    subscribers.add(chat_id)
-    await update.message.reply_text("✅ Sei iscritto ai segnali Pocket Option!")
+    await update.message.reply_text("🚀 Pocket Option Signals Bot attivo!\nRiceverai segnali qui.")
 
-# /stop
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.effective_chat.id
-    subscribers.discard(chat_id)
-    await update.message.reply_text("❌ Sei stato rimosso dai segnali.")
-
-# Controllo segnali e invio
+# Funzione per controllare segnali (simulazione esempio BTC)
 async def check_signals(app):
-    symbols = ["EURUSD", "GBPJPY", "BTCUSD"]  # puoi aggiungere altri qui
-    for sym in symbols:
-        signal = get_signal(sym)
-        if signal:
-            for chat_id in subscribers:
-                try:
-                    await app.bot.send_message(chat_id, signal)
-                except Exception as e:
-                    logging.error(f"Errore invio a {chat_id}: {e}")
+    try:
+        url = f"https://www.alphavantage.co/query?function=TIME_SERIES_INTRADAY&symbol=BTCUSD&interval=1min&apikey={ALPHA_KEY}"
+        r = requests.get(url)
+        data = r.json()
+
+        last_refreshed = data["Meta Data"]["3. Last Refreshed"]
+        last_close = float(data["Time Series (1min)"][last_refreshed]["4. close"])
+
+        # Semplice logica UP / DOWN
+        signal = "📈 BUY" if last_close % 2 == 0 else "📉 SELL"
+
+        text = f"⚡ Segnale BTC/USD\nPrezzo: {last_close}\nSegnale: {signal}"
+
+        # Invia a tutti (per semplicità mando al mio chat_id se startato)
+        for chat_id in app.chat_ids:
+            await app.bot.send_message(chat_id=chat_id, text=text)
+
+    except Exception as e:
+        logging.error(f"Errore check_signals: {e}")
+
+# Salva le chat che usano /start
+async def save_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.message.chat_id
+    if chat_id not in context.application.chat_ids:
+        context.application.chat_ids.add(chat_id)
+    await start(update, context)
 
 # Main
-async def main():
+if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stop", stop))
+    # Set dove salvo le chat_id
+    app.chat_ids = set()
 
-    job_queue = app.job_queue
-    job_queue.run_repeating(lambda _: check_signals(app), interval=60, first=5)
+    # Comandi
+    app.add_handler(CommandHandler("start", save_chat_id))
 
-    await app.run_polling()
+    # Job: ogni 60 secondi controllo segnali
+    app.job_queue.run_repeating(lambda _: check_signals(app), interval=60, first=5)
 
-if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    print("✅ Bot avviato!")
+    app.run_polling()
