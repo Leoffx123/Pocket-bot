@@ -41,18 +41,17 @@ async def check_signals(app):
         logging.error(f"Errore check_signals: {e}")
 
 # Salva le chat che usano /start
-async def save_chat_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    chat_id = update.message.chat_id
-    if chat_id not in context.application.chat_ids:
-        context.application.chat_ids.add(chat_id)
-    await start(update, context)
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+    subscribers.add(chat_id)
+    await update.message.reply_text("✅ Ti sei iscritto ai segnali Pocket Option!")
 
 # Main
 if __name__ == "__main__":
     app = ApplicationBuilder().token(TOKEN).build()
 
     # Set dove salvo le chat_id
-    app.chat_ids = set()
+    subscribers = set()
 
     # Comandi
     app.add_handler(CommandHandler("start", save_chat_id))
