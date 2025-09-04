@@ -3,20 +3,27 @@ import logging
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
 import asyncio
 
+# ======== CARICAMENTO VARIABILI ========= #
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 ALPHA_KEY = os.getenv("ALPHA_KEY")
 
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+# ======== LOGGING ========= #
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 
+# ======== SUBSCRIBERS ========= #
 subscribers = set()
-user_assets = {}
+user_assets = {}  # user_id → asset scelto
 
+# ======== FUNZIONI DATI ========= #
 def get_binance_prices(symbol="BTCUSDT", limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
@@ -58,9 +65,15 @@ def format_message(asset, signal):
         f"Timeframe: 1m | 2m | 5m"
     )
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ======== HANDLER BOT ========= #
+async def start(update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     subscribers.add(user_id)
+
+    # Avvia job broadcast solo la prima volta
+    if not hasattr(context.application, "job_started"):
+        context.application.job_queue.run_repeating(auto_broadcast, interval=300, first=5)
+        context.application.job_started = True
 
     keyboard = [
         [InlineKeyboardButton("BTCUSDT", callback_data="BTCUSDT"),
@@ -77,13 +90,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_chat.id
-    subscribers.discard(user_id)
-    user_assets.pop(user_id, None)
-    await update.message.reply_text("🛑 Hai interrotto i segnali. Puoi riattivarli con /start.")
-
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     asset = query.data
@@ -91,35 +98,30 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_assets[user_id] = asset
     await query.edit_message_text(text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
 
+# Broadcast automatico
 async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
     for user_id in list(subscribers):
         asset = user_assets.get(user_id)
         if not asset:
             continue
+
         prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
         signal = generate_signal(prices)
         msg = format_message(asset, signal)
+
         try:
             await context.bot.send_message(chat_id=user_id, text=msg)
         except Exception as e:
             logging.error(f"Errore inviando a {user_id}: {e}")
 
+# ======== MAIN ========= #
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button))
-
-    # Avvia il job **dopo** l’inizializzazione
-    async def start_jobs(app):
-        await asyncio.sleep(1)  # lascia finire init
-        app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
-
-    asyncio.create_task(start_jobs(app))
 
     await app.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
