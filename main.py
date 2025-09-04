@@ -19,9 +19,9 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# ======== STORAGE ========= #
-subscribers = set()
-user_assets = {}  # user_id → asset scelto
+# ======== SUBSCRIBERS ========= #
+subscribers = set()  # qui salviamo gli utenti iscritti
+user_assets = {}     # user_id -> asset scelto
 
 # ======== FUNZIONI DATI ========= #
 def get_binance_prices(symbol="BTCUSDT", limit=50):
@@ -100,6 +100,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti."
     )
 
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat is None:
+        return
+    user_id = update.effective_chat.id
+    if user_id in subscribers:
+        subscribers.remove(user_id)
+    if user_id in user_assets:
+        user_assets.pop(user_id)
+    await update.message.reply_text("⛔ Ti sei disiscritto dai segnali automatici.")
+
 # ======== BROADCAST AUTOMATICO ========= #
 async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
     for user_id in list(subscribers):
@@ -115,24 +125,22 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Errore inviando a {user_id}: {e}")
 
 # ======== MAIN ========= #
-async def main():
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     # Handlers
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Inizializza app prima di aggiungere job_queue
-    await app.initialize()
+    # Job automatico: lo aggiungiamo solo quando l'app è pronta
+    async def start_jobs(app):
+        app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
-    # Job automatico ogni 5 minuti
-    app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+    app.post_init = start_jobs  # run_repeating sarà attivato appena il bot parte
 
     # Avvio bot
-    await app.start()
-    await app.updater.start_polling()
-    await app.idle()
+    app.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main() 
