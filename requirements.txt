@@ -1,3 +1,4 @@
+pip install python-telegram-bot --upgrade
 python-telegram-bot==20.5
 python-dotenv
 pandas
