@@ -3,8 +3,8 @@ import logging
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, JobQueue
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
 
 # ======== CARICAMENTO VARIABILI ========= #
@@ -69,11 +69,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     subscribers.add(user_id)
 
-    # Avvia job broadcast solo la prima volta
-    if not hasattr(context.application, "job_started"):
-        context.application.job_queue.run_repeating(auto_broadcast, interval=300, first=10)
-        context.application.job_started = True
-
     keyboard = [
         [InlineKeyboardButton("BTCUSDT", callback_data="BTCUSDT"),
          InlineKeyboardButton("ETHUSDT", callback_data="ETHUSDT")],
@@ -125,6 +120,10 @@ def main():
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button))
 
+    # JobQueue: correttamente associato all'app
+    app.job_queue.run_repeating(auto_broadcast, interval=300, first=10)
+
+    # Avvia polling
     app.run_polling()
 
 if __name__ == "__main__":
