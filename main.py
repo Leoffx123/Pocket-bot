@@ -4,7 +4,7 @@ import requests
 import pandas as pd
 from datetime import datetime, timedelta
 from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes, JobQueue
 from dotenv import load_dotenv
 
 # ======== CARICAMENTO VARIABILI ========= #
@@ -71,7 +71,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Avvia job broadcast solo la prima volta
     if not hasattr(context.application, "job_started"):
-        context.application.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+        context.application.job_queue.run_repeating(auto_broadcast, interval=300, first=10)
         context.application.job_started = True
 
     keyboard = [
