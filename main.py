@@ -6,36 +6,45 @@ from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
+import asyncio
 
-# Carica variabili ambiente
+# ======== CARICAMENTO VARIABILI ========= #
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 ALPHA_KEY = os.getenv("ALPHA_KEY")
 
-# Logging
+# ======== LOGGING ========= #
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
+# ======== STORAGE ========= #
 subscribers = set()
 user_assets = {}  # user_id → asset scelto
 
 # ======== FUNZIONI DATI ========= #
-
 def get_binance_prices(symbol="BTCUSDT", limit=50):
-    url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
-    data = requests.get(url).json()
-    closes = [float(c[4]) for c in data]
-    return closes
+    try:
+        url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
+        data = requests.get(url, timeout=10).json()
+        closes = [float(c[4]) for c in data]
+        return closes
+    except Exception as e:
+        logging.error(f"Errore Binance {symbol}: {e}")
+        return []
 
 def get_alpha_prices(symbol="EURUSD", limit=50):
-    url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}&interval=1min&apikey={ALPHA_KEY}&outputsize=compact"
-    data = requests.get(url).json()
-    if "Time Series FX (1min)" not in data:
+    try:
+        url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}&interval=1min&apikey={ALPHA_KEY}&outputsize=compact"
+        data = requests.get(url, timeout=10).json()
+        if "Time Series FX (1min)" not in data:
+            return []
+        prices = [float(v["4. close"]) for k, v in data["Time Series FX (1min)"].items()]
+        return prices[:limit][::-1]
+    except Exception as e:
+        logging.error(f"Errore Alpha {symbol}: {e}")
         return []
-    prices = [float(v["4. close"]) for k, v in data["Time Series FX (1min)"].items()]
-    return prices[:limit][::-1]
 
 def generate_signal(prices: list):
     if len(prices) < 20:
@@ -56,9 +65,10 @@ def format_message(asset, signal):
         f"Timeframe: 1m | 2m | 5m"
     )
 
-# ======== BOT HANDLERS ========= #
-
+# ======== HANDLER BOT ========= #
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_chat is None:
+        return
     user_id = update.effective_chat.id
     subscribers.add(user_id)
 
@@ -79,20 +89,23 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    if query is None:
+        return
     await query.answer()
     asset = query.data
-    user_id = query.from_user.id  # più sicuro di query.message.chat_id
+    user_id = query.from_user.id
     user_assets[user_id] = asset
-    await query.edit_message_text(text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
 
-# ======== BROADCAST ========= #
+    await query.edit_message_text(
+        text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti."
+    )
 
+# ======== BROADCAST AUTOMATICO ========= #
 async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
     for user_id in list(subscribers):
         asset = user_assets.get(user_id)
         if not asset:
             continue
-
         try:
             prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
             signal = generate_signal(prices)
@@ -102,17 +115,24 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Errore inviando a {user_id}: {e}")
 
 # ======== MAIN ========= #
-
-def main():
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # job queue
+    # Inizializza app prima di aggiungere job_queue
+    await app.initialize()
+
+    # Job automatico ogni 5 minuti
     app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
-    app.run_polling()
+    # Avvio bot
+    await app.start()
+    await app.updater.start_polling()
+    await app.idle()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
