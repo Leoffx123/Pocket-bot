@@ -6,7 +6,6 @@ from datetime import datetime, timedelta
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
-import asyncio
 
 # ======== CARICAMENTO VARIABILI ========= #
 load_dotenv()
@@ -21,7 +20,7 @@ logging.basicConfig(
 
 # ======== SUBSCRIBERS ========= #
 subscribers = set()
-user_assets = {}
+user_assets = {}  # user_id → asset scelto
 
 # ======== FUNZIONI DATI ========= #
 def get_binance_prices(symbol="BTCUSDT", limit=50):
@@ -67,8 +66,6 @@ def format_message(asset, signal):
 
 # ======== HANDLER BOT ========= #
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat is None:
-        return
     user_id = update.effective_chat.id
     subscribers.add(user_id)
 
@@ -86,6 +83,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("USDJPY", callback_data="USDJPY")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
+
     await update.message.reply_text(
         "✅ Sei iscritto!\n\nScegli un asset dai bottoni qui sotto 👇\nIl bot ti manderà segnali automatici ogni 5 minuti.",
         reply_markup=reply_markup
@@ -93,35 +91,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    if query is None:
-        return
     await query.answer()
     asset = query.data
     user_id = query.from_user.id
-    user_assets[user_id] = asset
+    user_assets[user_id] = asset  # salva asset scelto
 
-    await query.edit_message_text(
-        text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti."
-    )
+    await query.edit_message_text(text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_chat is None:
-        return
-    user_id = update.effective_chat.id
-    subscribers.discard(user_id)
-    user_assets.pop(user_id, None)
-    await update.message.reply_text("⛔ Ti sei disiscritto dai segnali automatici.")
-
-# ======== BROADCAST AUTOMATICO ========= #
+# Broadcast automatico
 async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
     for user_id in list(subscribers):
         asset = user_assets.get(user_id)
         if not asset:
             continue
+
+        prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
+        signal = generate_signal(prices)
+        msg = format_message(asset, signal)
+
         try:
-            prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
-            signal = generate_signal(prices)
-            msg = format_message(asset, signal)
             await context.bot.send_message(chat_id=user_id, text=msg)
         except Exception as e:
             logging.error(f"Errore inviando a {user_id}: {e}")
@@ -131,8 +119,9 @@ def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button))
+
+    # Non mettere job_queue qui! È già avviato dentro /start
 
     app.run_polling()
 
