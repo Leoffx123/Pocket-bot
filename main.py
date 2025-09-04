@@ -8,22 +8,16 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
 
-# ======== CARICAMENTO VARIABILI ========= #
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 ALPHA_KEY = os.getenv("ALPHA_KEY")
 
-# ======== LOGGING ========= #
-logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    level=logging.INFO
-)
+logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 
-# ======== SUBSCRIBERS ========= #
 subscribers = set()
-user_assets = {}  # user_id → asset scelto
+user_assets = {}
 
-# ======== FUNZIONI DATI ========= #
+# ==== FUNZIONI DATI ====
 def get_binance_prices(symbol="BTCUSDT", limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
@@ -58,7 +52,7 @@ def format_message(asset, signal):
     entry_time = (now + timedelta(minutes=2)).strftime("%H:%M")
     return f"📊 Segnale Pocket Option\nAsset: {asset}\nDirezione: {signal}\nOra ingresso: {entry_time}\nTimeframe: 1m | 2m | 5m"
 
-# ======== BROADCAST LOOP ========= #
+# ==== BROADCAST LOOP ====
 async def broadcast_loop(app):
     while True:
         if subscribers:
@@ -73,9 +67,9 @@ async def broadcast_loop(app):
                     await app.bot.send_message(chat_id=user_id, text=msg)
                 except Exception as e:
                     logging.error(f"Errore inviando a {user_id}: {e}")
-        await asyncio.sleep(300)  # ogni 5 minuti
+        await asyncio.sleep(300)
 
-# ======== HANDLER BOT ========= #
+# ==== HANDLER BOT ====
 async def start(update, context):
     user_id = update.effective_chat.id
     subscribers.add(user_id)
@@ -89,11 +83,7 @@ async def start(update, context):
          InlineKeyboardButton("USDJPY", callback_data="USDJPY")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text(
-        "✅ Sei iscritto!\n\nScegli un asset dai bottoni qui sotto 👇\nRiceverai segnali automatici ogni 5 minuti.",
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text("✅ Sei iscritto!\n\nScegli un asset dai bottoni qui sotto 👇\nRiceverai segnali automatici ogni 5 minuti.", reply_markup=reply_markup)
 
 async def stop(update, context):
     user_id = update.effective_chat.id
@@ -109,18 +99,20 @@ async def button(update, context):
     user_assets[user_id] = asset
     await query.edit_message_text(text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
 
-# ======== MAIN ========= #
+# ==== MAIN ====
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Avvia broadcast loop asincrono
+    await app.initialize()
+    await app.start()
     asyncio.create_task(broadcast_loop(app))
-
-    # Avvia polling
-    await app.run_polling()
+    await app.updater.start_polling()  # per compatibilità con run_polling
+    await app.updater.idle()
+    await app.stop()
 
 if __name__ == "__main__":
+    import asyncio
     asyncio.run(main())
