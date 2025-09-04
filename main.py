@@ -20,8 +20,8 @@ logging.basicConfig(
 )
 
 # ======== SUBSCRIBERS ========= #
-subscribers = set()  # qui salviamo gli utenti iscritti
-user_assets = {}     # user_id -> asset scelto
+subscribers = set()
+user_assets = {}
 
 # ======== FUNZIONI DATI ========= #
 def get_binance_prices(symbol="BTCUSDT", limit=50):
@@ -72,6 +72,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     subscribers.add(user_id)
 
+    # Avvia job broadcast solo la prima volta
+    if not hasattr(context.application, "job_started"):
+        context.application.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+        context.application.job_started = True
+
     keyboard = [
         [InlineKeyboardButton("BTCUSDT", callback_data="BTCUSDT"),
          InlineKeyboardButton("ETHUSDT", callback_data="ETHUSDT")],
@@ -81,7 +86,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("USDJPY", callback_data="USDJPY")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
     await update.message.reply_text(
         "✅ Sei iscritto!\n\nScegli un asset dai bottoni qui sotto 👇\nIl bot ti manderà segnali automatici ogni 5 minuti.",
         reply_markup=reply_markup
@@ -104,10 +108,8 @@ async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_chat is None:
         return
     user_id = update.effective_chat.id
-    if user_id in subscribers:
-        subscribers.remove(user_id)
-    if user_id in user_assets:
-        user_assets.pop(user_id)
+    subscribers.discard(user_id)
+    user_assets.pop(user_id, None)
     await update.message.reply_text("⛔ Ti sei disiscritto dai segnali automatici.")
 
 # ======== BROADCAST AUTOMATICO ========= #
@@ -128,19 +130,11 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Job automatico: lo aggiungiamo solo quando l'app è pronta
-    async def start_jobs(app):
-        app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
-
-    app.post_init = start_jobs  # run_repeating sarà attivato appena il bot parte
-
-    # Avvio bot
     app.run_polling()
 
 if __name__ == "__main__":
-    main() 
+    main()
