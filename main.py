@@ -100,7 +100,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     asset = query.data
     user_id = query.from_user.id
-    user_assets[user_id] = asset  # salva asset scelto
+    user_assets[user_id] = asset
 
     await query.edit_message_text(text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
 
@@ -120,23 +120,14 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"Errore inviando a {user_id}: {e}")
 
-# ======== ERROR HANDLER ========= #
-async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
-    logging.error(msg="Eccezione catturata!", exc_info=context.error)
-
 # ======== MAIN ========= #
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Error handler globale
-    app.add_error_handler(error_handler)
-
-    # Avvia bot
     app.run_polling()
 
 if __name__ == "__main__":
