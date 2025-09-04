@@ -3,11 +3,11 @@ import logging
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
 
-# ======== ENV VARS ========= #
+# ======== CARICAMENTO VARIABILI ========= #
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 ALPHA_KEY = os.getenv("ALPHA_KEY")
@@ -18,16 +18,17 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# ======== GLOBALS ========= #
+# ======== SUBSCRIBERS ========= #
 subscribers = set()
 user_assets = {}  # user_id → asset scelto
 
-# ======== DATA FUNCTIONS ========= #
+# ======== FUNZIONI DATI ========= #
 def get_binance_prices(symbol="BTCUSDT", limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
         data = requests.get(url, timeout=10).json()
-        return [float(c[4]) for c in data]
+        closes = [float(c[4]) for c in data]
+        return closes
     except Exception as e:
         logging.error(f"Errore Binance {symbol}: {e}")
         return []
@@ -63,8 +64,8 @@ def format_message(asset, signal):
         f"Timeframe: 1m | 2m | 5m"
     )
 
-# ======== HANDLERS ========= #
-async def start_command(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
+# ======== HANDLER BOT ========= #
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     subscribers.add(user_id)
 
@@ -84,17 +85,17 @@ async def start_command(update: "telegram.Update", context: ContextTypes.DEFAULT
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "✅ Sei iscritto!\n\nScegli un asset dai bottoni 👇\nRiceverai segnali automatici ogni 5 minuti.",
+        "✅ Sei iscritto!\n\nScegli un asset dai bottoni qui sotto 👇\nRiceverai segnali automatici ogni 5 minuti.",
         reply_markup=reply_markup
     )
 
-async def stop_command(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     subscribers.discard(user_id)
     user_assets.pop(user_id, None)
     await update.message.reply_text("🛑 Hai interrotto i segnali. Puoi riattivarli con /start.")
 
-async def button_handler(update: "telegram.Update", context: ContextTypes.DEFAULT_TYPE):
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     asset = query.data
@@ -102,7 +103,7 @@ async def button_handler(update: "telegram.Update", context: ContextTypes.DEFAUL
     user_assets[user_id] = asset
     await query.edit_message_text(text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
 
-# Broadcast
+# Broadcast automatico
 async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
     for user_id in list(subscribers):
         asset = user_assets.get(user_id)
@@ -119,9 +120,11 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
 # ======== MAIN ========= #
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
-    app.add_handler(CommandHandler("start", start_command))
-    app.add_handler(CommandHandler("stop", stop_command))
-    app.add_handler(CallbackQueryHandler(button_handler))
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stop", stop))
+    app.add_handler(CallbackQueryHandler(button))
+
     app.run_polling()
 
 if __name__ == "__main__":
