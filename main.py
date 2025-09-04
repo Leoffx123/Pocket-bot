@@ -99,35 +99,36 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_assets[user_id] = asset
     await query.edit_message_text(text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
 
-# Broadcast automatico
+# ======== BROADCAST LOOP ========= #
 async def broadcast_loop(app):
+    await app.initialize()  # ATTENZIONE: deve essere awaited
+    await app.start()
     while True:
         for user_id in list(subscribers):
             asset = user_assets.get(user_id)
             if not asset:
                 continue
-
             prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
             signal = generate_signal(prices)
             msg = format_message(asset, signal)
-
             try:
                 await app.bot.send_message(chat_id=user_id, text=msg)
             except Exception as e:
                 logging.error(f"Errore inviando a {user_id}: {e}")
         await asyncio.sleep(300)  # 5 minuti
+    # app.stop()  # opzionale, se vuoi fermare il bot
 
 # ======== MAIN ========= #
 async def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+    app = await ApplicationBuilder().token(TOKEN).build()  # ATTENZIONE: await qui
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Avvia broadcast in background
+    # Start broadcast loop in background
     asyncio.create_task(broadcast_loop(app))
 
-    # Avvia bot
+    # Avvia il polling
     await app.run_polling()
 
 if __name__ == "__main__":
