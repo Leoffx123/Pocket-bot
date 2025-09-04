@@ -2,8 +2,9 @@ import os
 import logging
 import requests
 import pandas as pd
+import asyncio
 from datetime import datetime, timedelta
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
 
@@ -27,8 +28,7 @@ def get_binance_prices(symbol="BTCUSDT", limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
         data = requests.get(url, timeout=10).json()
-        closes = [float(c[4]) for c in data]
-        return closes
+        return [float(c[4]) for c in data]
     except Exception as e:
         logging.error(f"Errore Binance {symbol}: {e}")
         return []
@@ -39,7 +39,7 @@ def get_alpha_prices(symbol="EURUSD", limit=50):
         data = requests.get(url, timeout=10).json()
         if "Time Series FX (1min)" not in data:
             return []
-        prices = [float(v["4. close"]) for k, v in data["Time Series FX (1min)"].items()]
+        prices = [float(v["4. close"]) for k,v in data["Time Series FX (1min)"].items()]
         return prices[:limit][::-1]
     except Exception as e:
         logging.error(f"Errore Alpha {symbol}: {e}")
@@ -56,23 +56,29 @@ def generate_signal(prices: list):
 def format_message(asset, signal):
     now = datetime.now()
     entry_time = (now + timedelta(minutes=2)).strftime("%H:%M")
-    return (
-        f"📊 Segnale Pocket Option\n"
-        f"Asset: {asset}\n"
-        f"Direzione: {signal}\n"
-        f"Ora ingresso: {entry_time}\n"
-        f"Timeframe: 1m | 2m | 5m"
-    )
+    return f"📊 Segnale Pocket Option\nAsset: {asset}\nDirezione: {signal}\nOra ingresso: {entry_time}\nTimeframe: 1m | 2m | 5m"
+
+# ======== BROADCAST LOOP ========= #
+async def broadcast_loop(app):
+    while True:
+        if subscribers:
+            for user_id in list(subscribers):
+                asset = user_assets.get(user_id)
+                if not asset:
+                    continue
+                prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
+                signal = generate_signal(prices)
+                msg = format_message(asset, signal)
+                try:
+                    await app.bot.send_message(chat_id=user_id, text=msg)
+                except Exception as e:
+                    logging.error(f"Errore inviando a {user_id}: {e}")
+        await asyncio.sleep(300)  # ogni 5 minuti
 
 # ======== HANDLER BOT ========= #
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def start(update, context):
     user_id = update.effective_chat.id
     subscribers.add(user_id)
-
-    # Avvia job broadcast la prima volta
-    if not hasattr(context.application, "job_started"):
-        context.application.job_queue.run_repeating(auto_broadcast, interval=300, first=10)
-        context.application.job_started = True
 
     keyboard = [
         [InlineKeyboardButton("BTCUSDT", callback_data="BTCUSDT"),
@@ -89,13 +95,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=reply_markup
     )
 
-async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop(update, context):
     user_id = update.effective_chat.id
     subscribers.discard(user_id)
     user_assets.pop(user_id, None)
     await update.message.reply_text("🛑 Hai interrotto i segnali. Puoi riattivarli con /start.")
 
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def button(update, context):
     query = update.callback_query
     await query.answer()
     asset = query.data
@@ -103,30 +109,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_assets[user_id] = asset
     await query.edit_message_text(text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
 
-# Broadcast automatico
-async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
-    for user_id in list(subscribers):
-        asset = user_assets.get(user_id)
-        if not asset:
-            continue
-        prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
-        signal = generate_signal(prices)
-        msg = format_message(asset, signal)
-        try:
-            await context.bot.send_message(chat_id=user_id, text=msg)
-        except Exception as e:
-            logging.error(f"Errore inviando a {user_id}: {e}")
-
 # ======== MAIN ========= #
-def main():
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button))
 
+    # Avvia broadcast loop asincrono
+    asyncio.create_task(broadcast_loop(app))
+
     # Avvia polling
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
