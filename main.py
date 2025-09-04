@@ -101,8 +101,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ======== BROADCAST LOOP ========= #
 async def broadcast_loop(app):
-    await app.initialize()  # ATTENZIONE: deve essere awaited
-    await app.start()
     while True:
         for user_id in list(subscribers):
             asset = user_assets.get(user_id)
@@ -116,21 +114,19 @@ async def broadcast_loop(app):
             except Exception as e:
                 logging.error(f"Errore inviando a {user_id}: {e}")
         await asyncio.sleep(300)  # 5 minuti
-    # app.stop()  # opzionale, se vuoi fermare il bot
 
 # ======== MAIN ========= #
-async def main():
-    app = await ApplicationBuilder().token(TOKEN).build()  # ATTENZIONE: await qui
+def main():
+    app = ApplicationBuilder().token(TOKEN).build()  # NO await
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Start broadcast loop in background
-    asyncio.create_task(broadcast_loop(app))
+    # Avvia il loop broadcast in background
+    asyncio.get_event_loop().create_task(broadcast_loop(app))
 
-    # Avvia il polling
-    await app.run_polling()
+    app.run_polling()  # Questo blocca il thread e fa partire il bot
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
