@@ -5,7 +5,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
 
 # Carica variabili ambiente
@@ -25,14 +25,12 @@ user_assets = {}  # user_id → asset scelto
 
 # ======== FUNZIONI DATI ========= #
 
-# Binance (Crypto)
 def get_binance_prices(symbol="BTCUSDT", limit=50):
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
     data = requests.get(url).json()
     closes = [float(c[4]) for c in data]
     return closes
 
-# Alpha Vantage (Forex)
 def get_alpha_prices(symbol="EURUSD", limit=50):
     url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}&interval=1min&apikey={ALPHA_KEY}&outputsize=compact"
     data = requests.get(url).json()
@@ -41,7 +39,6 @@ def get_alpha_prices(symbol="EURUSD", limit=50):
     prices = [float(v["4. close"]) for k, v in data["Time Series FX (1min)"].items()]
     return prices[:limit][::-1]
 
-# Calcolo segnale EMA crossover
 def generate_signal(prices: list):
     if len(prices) < 20:
         return "⏳ Dati insufficienti"
@@ -49,14 +46,10 @@ def generate_signal(prices: list):
     df["EMA5"] = df["close"].ewm(span=5).mean()
     df["EMA20"] = df["close"].ewm(span=20).mean()
 
-    if df["EMA5"].iloc[-1] > df["EMA20"].iloc[-1]:
-        return "📈 UP"
-    else:
-        return "📉 DOWN"
+    return "📈 UP" if df["EMA5"].iloc[-1] > df["EMA20"].iloc[-1] else "📉 DOWN"
 
-# Format messaggio con timezone Italia
 def format_message(asset, signal):
-    tz = pytz.timezone("Europe/Rome")  # orario italiano
+    tz = pytz.timezone("Europe/Rome")
     now = datetime.now(tz)
     entry_time = (now + timedelta(minutes=2)).strftime("%H:%M")
     return (
@@ -67,7 +60,7 @@ def format_message(asset, signal):
         f"Timeframe: 1m | 2m | 5m"
     )
 
-# ======== BOT HANDLERS ========= #
+# ======== HANDLERS ========= #
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
@@ -93,25 +86,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     asset = query.data
     user_id = query.message.chat.id
-    user_assets[user_id] = asset  # salva asset scelto
+    user_assets[user_id] = asset
 
     await query.edit_message_text(
         text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti."
     )
 
-# Broadcast automatico
 async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
     for user_id in subscribers:
         asset = user_assets.get(user_id)
         if not asset:
             continue
 
-        # Dati reali
-        if "USDT" in asset:
-            prices = get_binance_prices(asset)
-        else:
-            prices = get_alpha_prices(asset)
-
+        prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
         signal = generate_signal(prices)
         msg = format_message(asset, signal)
 
@@ -122,16 +109,17 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
 
 # ======== MAIN ========= #
 
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+async def main():
+    app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # ogni 5 minuti manda segnali
+    # Qui la job_queue ESISTE perché l’app è stata costruita
     app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
