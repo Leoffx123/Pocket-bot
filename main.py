@@ -8,28 +8,23 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 from dotenv import load_dotenv
 import asyncio
 
-# ======== CARICAMENTO VARIABILI ========= #
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 ALPHA_KEY = os.getenv("ALPHA_KEY")
 
-# ======== LOGGING ========= #
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
-# ======== SUBSCRIBERS ========= #
 subscribers = set()
-user_assets = {}  # user_id → asset scelto
+user_assets = {}
 
-# ======== FUNZIONI DATI ========= #
 def get_binance_prices(symbol="BTCUSDT", limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
         data = requests.get(url, timeout=10).json()
-        closes = [float(c[4]) for c in data]
-        return closes
+        return [float(c[4]) for c in data]
     except Exception as e:
         logging.error(f"Errore Binance {symbol}: {e}")
         return []
@@ -40,8 +35,7 @@ def get_alpha_prices(symbol="EURUSD", limit=50):
         data = requests.get(url, timeout=10).json()
         if "Time Series FX (1min)" not in data:
             return []
-        prices = [float(v["4. close"]) for k, v in data["Time Series FX (1min)"].items()]
-        return prices[:limit][::-1]
+        return [float(v["4. close"]) for k,v in data["Time Series FX (1min)"].items()][:limit][::-1]
     except Exception as e:
         logging.error(f"Errore Alpha {symbol}: {e}")
         return []
@@ -57,20 +51,12 @@ def generate_signal(prices: list):
 def format_message(asset, signal):
     now = datetime.now()
     entry_time = (now + timedelta(minutes=2)).strftime("%H:%M")
-    return (
-        f"📊 Segnale Pocket Option\n"
-        f"Asset: {asset}\n"
-        f"Direzione: {signal}\n"
-        f"Ora ingresso: {entry_time}\n"
-        f"Timeframe: 1m | 2m | 5m"
-    )
+    return f"📊 Segnale Pocket Option\nAsset: {asset}\nDirezione: {signal}\nOra ingresso: {entry_time}\nTimeframe: 1m | 2m | 5m"
 
-# ======== HANDLER BOT ========= #
 async def start(update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     subscribers.add(user_id)
 
-    # Avvia job broadcast solo la prima volta
     if not hasattr(context.application, "job_started"):
         context.application.job_queue.run_repeating(auto_broadcast, interval=300, first=5)
         context.application.job_started = True
@@ -84,11 +70,7 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("USDJPY", callback_data="USDJPY")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-
-    await update.message.reply_text(
-        "✅ Sei iscritto!\n\nScegli un asset dai bottoni qui sotto 👇\nRiceverai segnali automatici ogni 5 minuti.",
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text("✅ Sei iscritto!\nScegli un asset dai bottoni 👇\nRiceverai segnali automatici ogni 5 minuti.", reply_markup=reply_markup)
 
 async def button(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -96,32 +78,32 @@ async def button(update, context: ContextTypes.DEFAULT_TYPE):
     asset = query.data
     user_id = query.from_user.id
     user_assets[user_id] = asset
-    await query.edit_message_text(text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
+    await query.edit_message_text(f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
 
-# Broadcast automatico
 async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
     for user_id in list(subscribers):
         asset = user_assets.get(user_id)
         if not asset:
             continue
-
         prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
         signal = generate_signal(prices)
         msg = format_message(asset, signal)
-
         try:
             await context.bot.send_message(chat_id=user_id, text=msg)
         except Exception as e:
             logging.error(f"Errore inviando a {user_id}: {e}")
 
-# ======== MAIN ========= #
 async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    await app.run_polling()
+    # Inizializza e avvia correttamente
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()  # necessario per compatibilità v20+
+    await app.updater.idle()  # mantiene vivo il bot
 
 if __name__ == "__main__":
     asyncio.run(main())
