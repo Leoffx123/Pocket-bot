@@ -101,7 +101,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     asset = query.data
     user_id = query.from_user.id
     user_assets[user_id] = asset
-
     await query.edit_message_text(text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
 
 # Broadcast automatico
@@ -110,11 +109,9 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
         asset = user_assets.get(user_id)
         if not asset:
             continue
-
         prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
         signal = generate_signal(prices)
         msg = format_message(asset, signal)
-
         try:
             await context.bot.send_message(chat_id=user_id, text=msg)
         except Exception as e:
