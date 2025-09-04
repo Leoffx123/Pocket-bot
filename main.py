@@ -8,18 +8,22 @@ from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandle
 from dotenv import load_dotenv
 import asyncio
 
+# ===== Caricamento variabili ambiente =====
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 ALPHA_KEY = os.getenv("ALPHA_KEY")
 
+# ===== Logging =====
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
+# ===== Dati utenti =====
 subscribers = set()
 user_assets = {}
 
+# ===== Funzioni dati =====
 def get_binance_prices(symbol="BTCUSDT", limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
@@ -53,10 +57,12 @@ def format_message(asset, signal):
     entry_time = (now + timedelta(minutes=2)).strftime("%H:%M")
     return f"📊 Segnale Pocket Option\nAsset: {asset}\nDirezione: {signal}\nOra ingresso: {entry_time}\nTimeframe: 1m | 2m | 5m"
 
+# ===== Handlers =====
 async def start(update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     subscribers.add(user_id)
 
+    # Avvia job broadcast solo la prima volta
     if not hasattr(context.application, "job_started"):
         context.application.job_queue.run_repeating(auto_broadcast, interval=300, first=5)
         context.application.job_started = True
@@ -70,7 +76,10 @@ async def start(update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("USDJPY", callback_data="USDJPY")]
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
-    await update.message.reply_text("✅ Sei iscritto!\nScegli un asset dai bottoni 👇\nRiceverai segnali automatici ogni 5 minuti.", reply_markup=reply_markup)
+    await update.message.reply_text(
+        "✅ Sei iscritto!\nScegli un asset dai bottoni 👇\nRiceverai segnali automatici ogni 5 minuti.",
+        reply_markup=reply_markup
+    )
 
 async def button(update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -93,17 +102,14 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"Errore inviando a {user_id}: {e}")
 
-async def main():
+# ===== Main =====
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Inizializza e avvia correttamente
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()  # necessario per compatibilità v20+
-    await app.updater.idle()  # mantiene vivo il bot
+    # Avvia il bot
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
