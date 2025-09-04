@@ -85,9 +85,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(keyboard)
 
     await update.message.reply_text(
-        "✅ Sei iscritto!\n\nScegli un asset dai bottoni qui sotto 👇\nIl bot ti manderà segnali automatici ogni 5 minuti.",
+        "✅ Sei iscritto!\n\nScegli un asset dai bottoni qui sotto 👇\nRiceverai segnali automatici ogni 5 minuti.",
         reply_markup=reply_markup
     )
+
+async def stop(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_chat.id
+    subscribers.discard(user_id)
+    user_assets.pop(user_id, None)
+    await update.message.reply_text("🛑 Hai interrotto i segnali. Puoi riattivarli con /start.")
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -114,15 +120,23 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             logging.error(f"Errore inviando a {user_id}: {e}")
 
+# ======== ERROR HANDLER ========= #
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logging.error(msg="Eccezione catturata!", exc_info=context.error)
+
 # ======== MAIN ========= #
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Handlers
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("stop", stop))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Non mettere job_queue qui! È già avviato dentro /start
+    # Error handler globale
+    app.add_error_handler(error_handler)
 
+    # Avvia bot
     app.run_polling()
 
 if __name__ == "__main__":
