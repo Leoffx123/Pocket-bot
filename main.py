@@ -18,20 +18,17 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# Salvataggio utenti e asset scelti
 subscribers = set()
 user_assets = {}  # user_id → asset scelto
 
 # ======== FUNZIONI DATI ========= #
 
-# Binance (Crypto)
 def get_binance_prices(symbol="BTCUSDT", limit=50):
     url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
     data = requests.get(url).json()
     closes = [float(c[4]) for c in data]
     return closes
 
-# Alpha Vantage (Forex)
 def get_alpha_prices(symbol="EURUSD", limit=50):
     url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}&interval=1min&apikey={ALPHA_KEY}&outputsize=compact"
     data = requests.get(url).json()
@@ -40,20 +37,14 @@ def get_alpha_prices(symbol="EURUSD", limit=50):
     prices = [float(v["4. close"]) for k, v in data["Time Series FX (1min)"].items()]
     return prices[:limit][::-1]
 
-# Calcolo segnale EMA crossover
 def generate_signal(prices: list):
     if len(prices) < 20:
         return "⏳ Dati insufficienti"
     df = pd.DataFrame(prices, columns=["close"])
     df["EMA5"] = df["close"].ewm(span=5).mean()
     df["EMA20"] = df["close"].ewm(span=20).mean()
+    return "📈 UP" if df["EMA5"].iloc[-1] > df["EMA20"].iloc[-1] else "📉 DOWN"
 
-    if df["EMA5"].iloc[-1] > df["EMA20"].iloc[-1]:
-        return "📈 UP"
-    else:
-        return "📉 DOWN"
-
-# Format messaggio
 def format_message(asset, signal):
     now = datetime.now()
     entry_time = (now + timedelta(minutes=2)).strftime("%H:%M")
@@ -90,28 +81,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     asset = query.data
-    user_id = query.message.chat_id
-    user_assets[user_id] = asset  # salva asset scelto
-
+    user_id = query.from_user.id  # più sicuro di query.message.chat_id
+    user_assets[user_id] = asset
     await query.edit_message_text(text=f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
 
-# Broadcast automatico
+# ======== BROADCAST ========= #
+
 async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
-    for user_id in subscribers:
+    for user_id in list(subscribers):
         asset = user_assets.get(user_id)
         if not asset:
             continue
 
-        # Dati reali
-        if "USDT" in asset:
-            prices = get_binance_prices(asset)
-        else:
-            prices = get_alpha_prices(asset)
-
-        signal = generate_signal(prices)
-        msg = format_message(asset, signal)
-
         try:
+            prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
+            signal = generate_signal(prices)
+            msg = format_message(asset, signal)
             await context.bot.send_message(chat_id=user_id, text=msg)
         except Exception as e:
             logging.error(f"Errore inviando a {user_id}: {e}")
@@ -124,9 +109,8 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # ogni 5 minuti manda segnali
-    job_queue = app.job_queue
-    job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+    # job queue
+    app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
     app.run_polling()
 
