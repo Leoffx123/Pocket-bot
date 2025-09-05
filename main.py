@@ -148,9 +148,8 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # job_queue ora funziona
-    job_queue = app.job_queue
-    job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+    # Usa la job_queue DOPO che l'app è costruita
+    app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
     await app.run_polling()
 
