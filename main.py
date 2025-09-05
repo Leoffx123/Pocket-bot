@@ -10,7 +10,6 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
-    JobQueue,
 )
 from dotenv import load_dotenv
 
@@ -154,10 +153,8 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # 🔥 Crea manualmente la JobQueue
-    job_queue = JobQueue()
-    job_queue.set_application(app)
-    job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+    # ✅ usa job_queue direttamente
+    app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
     await app.run_polling()
 
