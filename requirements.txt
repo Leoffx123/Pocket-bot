@@ -1,6 +1,5 @@
-python-telegram-bot==20.3
-python-dotenv
+python-telegram-bot[job-queue]==20.8
 requests
 pandas
-numpy
+python-dotenv
 pytz
