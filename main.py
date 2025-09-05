@@ -5,7 +5,13 @@ import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    JobQueue,
+)
 from dotenv import load_dotenv
 
 # ================== CONFIG ================== #
@@ -47,7 +53,7 @@ asset_map = {
     "GBP/USD": "GBPUSD",
     "USD/JPY": "USDJPY",
     "GBP/JPY": "GBPJPY",
-    "EUR/JPY": "EURJPY"
+    "EUR/JPY": "EURJPY",
 }
 
 # ================== FUNZIONI DATI ================== #
@@ -142,16 +148,19 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Errore inviando a {user_id}: {e}")
 
 # ================== MAIN ================== #
-def main():
+async def main():
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # qui la job_queue funziona perché lanciata dentro run_polling
-    app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+    # 🔥 Crea manualmente la JobQueue
+    job_queue = JobQueue()
+    job_queue.set_application(app)
+    job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
