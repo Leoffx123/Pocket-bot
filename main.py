@@ -1,7 +1,6 @@
 import os
 import logging
 import requests
-import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
@@ -10,6 +9,7 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
+    JobQueue,
 )
 from dotenv import load_dotenv
 
@@ -26,36 +26,15 @@ logging.basicConfig(
 subscribers = set()
 user_assets = {}
 
-# ================== ASSET MAP ================== #
 asset_map = {
     "Bitcoin": "BTCUSDT",
     "Ethereum": "ETHUSDT",
-    "Binance Coin": "BNBUSDT",
-    "Solana": "SOLUSDT",
-    "XRP": "XRPUSDT",
-    "Dogecoin": "DOGEUSDT",
-    "Cardano": "ADAUSDT",
-    "Avalanche": "AVAXUSDT",
-    "Polkadot": "DOTUSDT",
-    "Polygon": "MATICUSDT",
-    "Litecoin": "LTCUSDT",
-    "Shiba Inu": "SHIBUSDT",
-    "Tron": "TRXUSDT",
-    "Chainlink": "LINKUSDT",
-    "Aptos": "APTUSDT",
-    "Cosmos": "ATOMUSDT",
-    "Near Protocol": "NEARUSDT",
-    "Filecoin": "FILUSDT",
-    "Internet Computer": "ICPUSDT",
-    "Uniswap": "UNIUSDT",
     "EUR/USD": "EURUSD",
     "GBP/USD": "GBPUSD",
     "USD/JPY": "USDJPY",
-    "GBP/JPY": "GBPJPY",
-    "EUR/JPY": "EURJPY",
 }
 
-# ================== FUNZIONI DATI ================== #
+# ================== FUNZIONI ================== #
 def get_binance_prices(symbol="BTCUSDT", limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
@@ -81,13 +60,19 @@ def get_alpha_prices(symbol="EURUSD", limit=50):
         logging.error(f"Errore Alpha {symbol}: {e}")
         return []
 
+def ema(prices, span):
+    k = 2 / (span + 1)
+    ema_vals = [prices[0]]
+    for p in prices[1:]:
+        ema_vals.append(p * k + ema_vals[-1] * (1 - k))
+    return ema_vals
+
 def generate_signal(prices: list):
     if len(prices) < 20:
         return "⏳ Dati insufficienti"
-    df = pd.DataFrame(prices, columns=["close"])
-    df["EMA5"] = df["close"].ewm(span=5).mean()
-    df["EMA20"] = df["close"].ewm(span=20).mean()
-    return "📈 UP" if df["EMA5"].iloc[-1] > df["EMA20"].iloc[-1] else "📉 DOWN"
+    ema5 = ema(prices, 5)
+    ema20 = ema(prices, 20)
+    return "📈 UP" if ema5[-1] > ema20[-1] else "📉 DOWN"
 
 def format_message(asset, signal):
     tz = pytz.timezone("Europe/Rome")
@@ -109,7 +94,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons, row = [], []
     for i, asset in enumerate(asset_map.keys(), start=1):
         row.append(InlineKeyboardButton(asset, callback_data=asset))
-        if i % 4 == 0:
+        if i % 2 == 0:
             buttons.append(row)
             row = []
     if row:
@@ -153,8 +138,9 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # ✅ usa job_queue direttamente
-    app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+    job_queue = JobQueue()
+    job_queue.set_application(app)
+    job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
     await app.run_polling()
 
