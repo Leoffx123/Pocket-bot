@@ -19,11 +19,10 @@ logging.basicConfig(
 )
 
 subscribers = set()
-user_assets = {}  # user_id → asset scelto
+user_assets = {}
 
 # ================== ASSET MAP ================== #
 asset_map = {
-    # --- CRYPTO (Binance) ---
     "Bitcoin": "BTCUSDT",
     "Ethereum": "ETHUSDT",
     "Binance Coin": "BNBUSDT",
@@ -44,8 +43,6 @@ asset_map = {
     "Filecoin": "FILUSDT",
     "Internet Computer": "ICPUSDT",
     "Uniswap": "UNIUSDT",
-
-    # --- FOREX (Alpha Vantage) ---
     "EUR/USD": "EURUSD",
     "GBP/USD": "GBPUSD",
     "USD/JPY": "USDJPY",
@@ -54,20 +51,16 @@ asset_map = {
 }
 
 # ================== FUNZIONI DATI ================== #
-
 def get_binance_prices(symbol="BTCUSDT", limit=50):
-    """Dati reali crypto da Binance"""
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
         data = requests.get(url, timeout=5).json()
-        closes = [float(c[4]) for c in data]
-        return closes
+        return [float(c[4]) for c in data]
     except Exception as e:
         logging.error(f"Errore Binance {symbol}: {e}")
         return []
 
 def get_alpha_prices(symbol="EURUSD", limit=50):
-    """Dati reali Forex da Alpha Vantage"""
     try:
         url = (
             f"https://www.alphavantage.co/query?function=FX_INTRADAY"
@@ -77,14 +70,13 @@ def get_alpha_prices(symbol="EURUSD", limit=50):
         data = requests.get(url, timeout=5).json()
         if "Time Series FX (1min)" not in data:
             return []
-        prices = [float(v["4. close"]) for k, v in data["Time Series FX (1min)"].items()]
+        prices = [float(v["4. close"]) for _, v in data["Time Series FX (1min)"].items()]
         return prices[:limit][::-1]
     except Exception as e:
         logging.error(f"Errore Alpha {symbol}: {e}")
         return []
 
 def generate_signal(prices: list):
-    """Genera segnale con incrocio EMA"""
     if len(prices) < 20:
         return "⏳ Dati insufficienti"
     df = pd.DataFrame(prices, columns=["close"])
@@ -93,7 +85,6 @@ def generate_signal(prices: list):
     return "📈 UP" if df["EMA5"].iloc[-1] > df["EMA20"].iloc[-1] else "📉 DOWN"
 
 def format_message(asset, signal):
-    """Formatta messaggio segnale"""
     tz = pytz.timezone("Europe/Rome")
     now = datetime.now(tz)
     entry_time = (now + timedelta(minutes=2)).strftime("%H:%M")
@@ -106,15 +97,11 @@ def format_message(asset, signal):
     )
 
 # ================== HANDLERS ================== #
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start + scelta asset"""
     user_id = update.effective_chat.id
     subscribers.add(user_id)
 
-    # Creiamo bottoni dinamicamente (4 per riga)
-    buttons = []
-    row = []
+    buttons, row = [], []
     for i, asset in enumerate(asset_map.keys(), start=1):
         row.append(InlineKeyboardButton(asset, callback_data=asset))
         if i % 4 == 0:
@@ -126,38 +113,26 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reply_markup = InlineKeyboardMarkup(buttons)
 
     await update.message.reply_text(
-        "✅ Sei iscritto!\n\nScegli un asset dai bottoni qui sotto 👇\n"
-        "Il bot ti manderà segnali reali ogni 5 minuti.",
+        "✅ Sei iscritto!\n\nScegli un asset 👇\nIl bot ti manderà segnali reali ogni 5 minuti.",
         reply_markup=reply_markup
     )
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Gestione scelta asset"""
     query = update.callback_query
     await query.answer()
     asset_name = query.data
     user_id = query.message.chat.id
     user_assets[user_id] = asset_name
-
-    await query.edit_message_text(
-        text=f"✅ Asset aggiornato a {asset_name}\nRiceverai segnali reali ogni 5 minuti."
-    )
+    await query.edit_message_text(f"✅ Asset aggiornato a {asset_name}\nRiceverai segnali ogni 5 minuti.")
 
 async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
-    """Invio segnali automatici"""
     for user_id in list(subscribers):
         asset_name = user_assets.get(user_id)
         if not asset_name:
             continue
 
         ticker = asset_map[asset_name]
-
-        # Binance = Crypto (USDT alla fine), Alpha = Forex
-        if ticker.endswith("USDT"):
-            prices = get_binance_prices(ticker)
-        else:
-            prices = get_alpha_prices(ticker)
-
+        prices = get_binance_prices(ticker) if ticker.endswith("USDT") else get_alpha_prices(ticker)
         signal = generate_signal(prices)
         msg = format_message(asset_name, signal)
 
@@ -167,20 +142,17 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Errore inviando a {user_id}: {e}")
 
 # ================== MAIN ================== #
-
 async def main():
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Qui la job_queue esiste
-    app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+    # job_queue ora funziona
+    job_queue = app.job_queue
+    job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
-    await app.initialize()
-    await app.start()
-    await app.updater.start_polling()
-    await app.updater.idle()
+    await app.run_polling()
 
 if __name__ == "__main__":
     import asyncio
