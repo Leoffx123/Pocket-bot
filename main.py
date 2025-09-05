@@ -7,6 +7,7 @@ import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
+import asyncio
 
 # ================== CONFIG ================== #
 load_dotenv()
@@ -21,7 +22,6 @@ logging.basicConfig(
 subscribers = set()
 user_assets = {}
 
-# ================== ASSET MAP ================== #
 asset_map = {
     "Bitcoin": "BTCUSDT",
     "Ethereum": "ETHUSDT",
@@ -111,7 +111,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons.append(row)
 
     reply_markup = InlineKeyboardMarkup(buttons)
-
     await update.message.reply_text(
         "✅ Sei iscritto!\n\nScegli un asset 👇\nIl bot ti manderà segnali reali ogni 5 minuti.",
         reply_markup=reply_markup
@@ -148,10 +147,16 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Usa la job_queue DOPO che l'app è costruita
+    # Avvia il bot prima di usare job_queue
+    await app.initialize()
+    await app.start()
+
+    # Ora la job_queue è disponibile
     app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
-    await app.run_polling()
+    # Mantieni vivo il bot
+    await app.updater.start_polling()
+    await app.updater.idle()
 
 if __name__ == "__main__":
     import asyncio
