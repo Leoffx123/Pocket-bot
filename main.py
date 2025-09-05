@@ -174,11 +174,13 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Fix job_queue
-    job_queue = app.job_queue
-    job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+    # Qui la job_queue esiste
+    app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
-    await app.run_polling(close_loop=False)
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await app.updater.idle()
 
 if __name__ == "__main__":
     import asyncio
