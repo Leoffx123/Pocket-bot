@@ -5,16 +5,9 @@ import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    CallbackQueryHandler,
-    ContextTypes,
-)
+from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
-import asyncio
 
-# ================== CONFIG ================== #
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 ALPHA_KEY = os.getenv("ALPHA_KEY")
@@ -24,39 +17,18 @@ logging.basicConfig(
     level=logging.INFO
 )
 
-# ================== GLOBALS ================== #
 subscribers = set()
 user_assets = {}
 
 asset_map = {
     "Bitcoin": "BTCUSDT",
     "Ethereum": "ETHUSDT",
-    "Binance Coin": "BNBUSDT",
-    "Solana": "SOLUSDT",
-    "XRP": "XRPUSDT",
-    "Dogecoin": "DOGEUSDT",
-    "Cardano": "ADAUSDT",
-    "Avalanche": "AVAXUSDT",
-    "Polkadot": "DOTUSDT",
-    "Polygon": "MATICUSDT",
-    "Litecoin": "LTCUSDT",
-    "Shiba Inu": "SHIBUSDT",
-    "Tron": "TRXUSDT",
-    "Chainlink": "LINKUSDT",
-    "Aptos": "APTUSDT",
-    "Cosmos": "ATOMUSDT",
-    "Near Protocol": "NEARUSDT",
-    "Filecoin": "FILUSDT",
-    "Internet Computer": "ICPUSDT",
-    "Uniswap": "UNIUSDT",
     "EUR/USD": "EURUSD",
-    "GBP/USD": "GBPUSD",
-    "USD/JPY": "USDJPY",
-    "GBP/JPY": "GBPJPY",
-    "EUR/JPY": "EURJPY",
+    "GBP/USD": "GBPUSD"
+    # aggiungi altri asset come vuoi
 }
 
-# ================== FUNZIONI ================== #
+# FUNZIONI DATI
 def get_binance_prices(symbol="BTCUSDT", limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
@@ -68,16 +40,11 @@ def get_binance_prices(symbol="BTCUSDT", limit=50):
 
 def get_alpha_prices(symbol="EURUSD", limit=50):
     try:
-        url = (
-            f"https://www.alphavantage.co/query?function=FX_INTRADAY"
-            f"&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}"
-            f"&interval=1min&apikey={ALPHA_KEY}&outputsize=compact"
-        )
+        url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}&interval=1min&apikey={ALPHA_KEY}&outputsize=compact"
         data = requests.get(url, timeout=5).json()
         if "Time Series FX (1min)" not in data:
             return []
-        prices = [float(v["4. close"]) for _, v in data["Time Series FX (1min)"].items()]
-        return prices[:limit][::-1]
+        return [float(v["4. close"]) for _, v in data["Time Series FX (1min)"].items()][:limit][::-1]
     except Exception as e:
         logging.error(f"Errore Alpha {symbol}: {e}")
         return []
@@ -94,75 +61,50 @@ def format_message(asset, signal):
     tz = pytz.timezone("Europe/Rome")
     now = datetime.now(tz)
     entry_time = (now + timedelta(minutes=2)).strftime("%H:%M")
-    return (
-        f"📊 Segnale Pocket Option\n"
-        f"Asset: {asset}\n"
-        f"Direzione: {signal}\n"
-        f"Ora ingresso: {entry_time}\n"
-        f"Timeframe: 1m | 2m | 5m"
-    )
+    return f"📊 Segnale Pocket Option\nAsset: {asset}\nDirezione: {signal}\nOra ingresso: {entry_time}\nTimeframe: 1m | 2m | 5m"
 
-# ================== HANDLERS ================== #
+# HANDLERS
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     subscribers.add(user_id)
 
-    buttons, row = [], []
-    for i, asset in enumerate(asset_map.keys(), start=1):
-        row.append(InlineKeyboardButton(asset, callback_data=asset))
-        if i % 4 == 0:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-
+    buttons = [[InlineKeyboardButton(asset, callback_data=asset)] for asset in asset_map.keys()]
     reply_markup = InlineKeyboardMarkup(buttons)
 
-    # Avvia job solo la prima volta
+    # avvia job solo una volta
     if not hasattr(context.application, "job_started"):
         context.application.job_queue.run_repeating(auto_broadcast, interval=300, first=5)
         context.application.job_started = True
 
-    await update.message.reply_text(
-        "✅ Sei iscritto!\n\nScegli un asset 👇\nIl bot ti manderà segnali reali ogni 5 minuti.",
-        reply_markup=reply_markup
-    )
+    await update.message.reply_text("✅ Sei iscritto! Scegli un asset 👇", reply_markup=reply_markup)
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-    asset_name = query.data
-    user_id = query.message.chat.id
-    user_assets[user_id] = asset_name
-    await query.edit_message_text(f"✅ Asset aggiornato a {asset_name}\nRiceverai segnali ogni 5 minuti.")
+    user_assets[query.message.chat.id] = query.data
+    await query.edit_message_text(f"✅ Asset aggiornato a {query.data}\nRiceverai segnali ogni 5 minuti.")
 
 async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
     for user_id in list(subscribers):
         asset_name = user_assets.get(user_id)
         if not asset_name:
             continue
-
         ticker = asset_map[asset_name]
         prices = get_binance_prices(ticker) if ticker.endswith("USDT") else get_alpha_prices(ticker)
         signal = generate_signal(prices)
         msg = format_message(asset_name, signal)
-
         try:
             await context.bot.send_message(chat_id=user_id, text=msg)
         except Exception as e:
             logging.error(f"Errore inviando a {user_id}: {e}")
 
-# ================== MAIN ================== #
+# MAIN
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
-
-    # ✅ Job queue parte solo dopo build
     app.job_queue.run_repeating(auto_broadcast, interval=300, first=5)
-
-    app.run_polling()  # NON usare updater o await
+    app.run_polling()  # NON usare updater, NON usare asyncio.run
 
 if __name__ == "__main__":
     main()
