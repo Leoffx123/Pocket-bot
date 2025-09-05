@@ -56,7 +56,7 @@ asset_map = {
     "EUR/JPY": "EURJPY",
 }
 
-# ================== FUNZIONI DATI ================== #
+# ================== FUNZIONI ================== #
 def get_binance_prices(symbol="BTCUSDT", limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
@@ -118,6 +118,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     reply_markup = InlineKeyboardMarkup(buttons)
 
+    # Avvia job solo la prima volta
+    if not hasattr(context.application, "job_started"):
+        context.application.job_queue.run_repeating(auto_broadcast, interval=300, first=5)
+        context.application.job_started = True
+
     await update.message.reply_text(
         "✅ Sei iscritto!\n\nScegli un asset 👇\nIl bot ti manderà segnali reali ogni 5 minuti.",
         reply_markup=reply_markup
@@ -148,20 +153,16 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Errore inviando a {user_id}: {e}")
 
 # ================== MAIN ================== #
-async def main():
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # ✅ Job queue funziona solo dopo initialize
-    await app.initialize()
+    # ✅ Job queue parte solo dopo build
     app.job_queue.run_repeating(auto_broadcast, interval=300, first=5)
 
-    # Avvia bot
-    await app.start()
-    await app.updater.start_polling()
-    await app.updater.idle()
+    app.run_polling()  # NON usare updater o await
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
