@@ -5,7 +5,12 @@ import pandas as pd
 from datetime import datetime, timedelta
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+)
 from dotenv import load_dotenv
 
 # ================== CONFIG ================== #
@@ -101,7 +106,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_chat.id
     subscribers.add(user_id)
 
-    # Genera bottoni dinamici
     buttons, row = [], []
     for i, asset in enumerate(asset_map.keys(), start=1):
         row.append(InlineKeyboardButton(asset, callback_data=asset))
@@ -110,10 +114,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             row = []
     if row:
         buttons.append(row)
+
     reply_markup = InlineKeyboardMarkup(buttons)
 
     await update.message.reply_text(
-        "✅ Sei iscritto!\n\nScegli un asset 👇\nRiceverai segnali ogni 5 minuti.",
+        "✅ Sei iscritto!\n\nScegli un asset 👇\nIl bot ti manderà segnali reali ogni 5 minuti.",
         reply_markup=reply_markup
     )
 
@@ -130,28 +135,29 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
         asset_name = user_assets.get(user_id)
         if not asset_name:
             continue
+
         ticker = asset_map[asset_name]
         prices = get_binance_prices(ticker) if ticker.endswith("USDT") else get_alpha_prices(ticker)
         signal = generate_signal(prices)
         msg = format_message(asset_name, signal)
+
         try:
             await context.bot.send_message(chat_id=user_id, text=msg)
         except Exception as e:
             logging.error(f"Errore inviando a {user_id}: {e}")
 
 # ================== MAIN ================== #
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+async def main():
+    app = Application.builder().token(TOKEN).build()
 
-    # Handlers
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Job per segnali ogni 5 minuti
-    app.job_queue.run_repeating(auto_broadcast, interval=300, first=10)
+    # ✅ usa job_queue direttamente
+    app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
-    # Avvia bot
-    app.run_polling()
+    await app.run_polling()
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
