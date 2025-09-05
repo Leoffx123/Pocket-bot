@@ -3,48 +3,88 @@ import logging
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, ContextTypes
+import pytz
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from dotenv import load_dotenv
-import asyncio
 
-# ===== Caricamento variabili ambiente =====
+# ================== CONFIG ================== #
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 ALPHA_KEY = os.getenv("ALPHA_KEY")
 
-# ===== Logging =====
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 
-# ===== Dati utenti =====
 subscribers = set()
-user_assets = {}
+user_assets = {}  # user_id → asset scelto
 
-# ===== Funzioni dati =====
+# ================== ASSET MAP ================== #
+asset_map = {
+    # --- CRYPTO (Binance) ---
+    "Bitcoin": "BTCUSDT",
+    "Ethereum": "ETHUSDT",
+    "Binance Coin": "BNBUSDT",
+    "Solana": "SOLUSDT",
+    "XRP": "XRPUSDT",
+    "Dogecoin": "DOGEUSDT",
+    "Cardano": "ADAUSDT",
+    "Avalanche": "AVAXUSDT",
+    "Polkadot": "DOTUSDT",
+    "Polygon": "MATICUSDT",
+    "Litecoin": "LTCUSDT",
+    "Shiba Inu": "SHIBUSDT",
+    "Tron": "TRXUSDT",
+    "Chainlink": "LINKUSDT",
+    "Aptos": "APTUSDT",
+    "Cosmos": "ATOMUSDT",
+    "Near Protocol": "NEARUSDT",
+    "Filecoin": "FILUSDT",
+    "Internet Computer": "ICPUSDT",
+    "Uniswap": "UNIUSDT",
+
+    # --- FOREX (Alpha Vantage) ---
+    "EUR/USD": "EURUSD",
+    "GBP/USD": "GBPUSD",
+    "USD/JPY": "USDJPY",
+    "GBP/JPY": "GBPJPY",
+    "EUR/JPY": "EURJPY"
+}
+
+# ================== FUNZIONI DATI ================== #
+
 def get_binance_prices(symbol="BTCUSDT", limit=50):
+    """Dati reali crypto da Binance"""
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
-        data = requests.get(url, timeout=10).json()
-        return [float(c[4]) for c in data]
+        data = requests.get(url, timeout=5).json()
+        closes = [float(c[4]) for c in data]
+        return closes
     except Exception as e:
         logging.error(f"Errore Binance {symbol}: {e}")
         return []
 
 def get_alpha_prices(symbol="EURUSD", limit=50):
+    """Dati reali Forex da Alpha Vantage"""
     try:
-        url = f"https://www.alphavantage.co/query?function=FX_INTRADAY&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}&interval=1min&apikey={ALPHA_KEY}&outputsize=compact"
-        data = requests.get(url, timeout=10).json()
+        url = (
+            f"https://www.alphavantage.co/query?function=FX_INTRADAY"
+            f"&from_symbol={symbol[:3]}&to_symbol={symbol[3:]}"
+            f"&interval=1min&apikey={ALPHA_KEY}&outputsize=compact"
+        )
+        data = requests.get(url, timeout=5).json()
         if "Time Series FX (1min)" not in data:
             return []
-        return [float(v["4. close"]) for k,v in data["Time Series FX (1min)"].items()][:limit][::-1]
+        prices = [float(v["4. close"]) for k, v in data["Time Series FX (1min)"].items()]
+        return prices[:limit][::-1]
     except Exception as e:
         logging.error(f"Errore Alpha {symbol}: {e}")
         return []
 
 def generate_signal(prices: list):
+    """Genera segnale con incrocio EMA"""
     if len(prices) < 20:
         return "⏳ Dati insufficienti"
     df = pd.DataFrame(prices, columns=["close"])
@@ -53,63 +93,92 @@ def generate_signal(prices: list):
     return "📈 UP" if df["EMA5"].iloc[-1] > df["EMA20"].iloc[-1] else "📉 DOWN"
 
 def format_message(asset, signal):
-    now = datetime.now()
+    """Formatta messaggio segnale"""
+    tz = pytz.timezone("Europe/Rome")
+    now = datetime.now(tz)
     entry_time = (now + timedelta(minutes=2)).strftime("%H:%M")
-    return f"📊 Segnale Pocket Option\nAsset: {asset}\nDirezione: {signal}\nOra ingresso: {entry_time}\nTimeframe: 1m | 2m | 5m"
+    return (
+        f"📊 Segnale Pocket Option\n"
+        f"Asset: {asset}\n"
+        f"Direzione: {signal}\n"
+        f"Ora ingresso: {entry_time}\n"
+        f"Timeframe: 1m | 2m | 5m"
+    )
 
-# ===== Handlers =====
-async def start(update, context: ContextTypes.DEFAULT_TYPE):
+# ================== HANDLERS ================== #
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Start + scelta asset"""
     user_id = update.effective_chat.id
     subscribers.add(user_id)
 
-    # Avvia job broadcast solo la prima volta
-    if not hasattr(context.application, "job_started"):
-        context.application.job_queue.run_repeating(auto_broadcast, interval=300, first=5)
-        context.application.job_started = True
+    # Creiamo bottoni dinamicamente (4 per riga)
+    buttons = []
+    row = []
+    for i, asset in enumerate(asset_map.keys(), start=1):
+        row.append(InlineKeyboardButton(asset, callback_data=asset))
+        if i % 4 == 0:
+            buttons.append(row)
+            row = []
+    if row:
+        buttons.append(row)
 
-    keyboard = [
-        [InlineKeyboardButton("BTCUSDT", callback_data="BTCUSDT"),
-         InlineKeyboardButton("ETHUSDT", callback_data="ETHUSDT")],
-        [InlineKeyboardButton("BNBUSDT", callback_data="BNBUSDT"),
-         InlineKeyboardButton("EURUSD", callback_data="EURUSD")],
-        [InlineKeyboardButton("GBPJPY", callback_data="GBPJPY"),
-         InlineKeyboardButton("USDJPY", callback_data="USDJPY")]
-    ]
-    reply_markup = InlineKeyboardMarkup(keyboard)
+    reply_markup = InlineKeyboardMarkup(buttons)
+
     await update.message.reply_text(
-        "✅ Sei iscritto!\nScegli un asset dai bottoni 👇\nRiceverai segnali automatici ogni 5 minuti.",
+        "✅ Sei iscritto!\n\nScegli un asset dai bottoni qui sotto 👇\n"
+        "Il bot ti manderà segnali reali ogni 5 minuti.",
         reply_markup=reply_markup
     )
 
-async def button(update, context: ContextTypes.DEFAULT_TYPE):
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Gestione scelta asset"""
     query = update.callback_query
     await query.answer()
-    asset = query.data
-    user_id = query.from_user.id
-    user_assets[user_id] = asset
-    await query.edit_message_text(f"✅ Asset aggiornato a {asset}\nRiceverai segnali automatici ogni 5 minuti.")
+    asset_name = query.data
+    user_id = query.message.chat.id
+    user_assets[user_id] = asset_name
+
+    await query.edit_message_text(
+        text=f"✅ Asset aggiornato a {asset_name}\nRiceverai segnali reali ogni 5 minuti."
+    )
 
 async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
+    """Invio segnali automatici"""
     for user_id in list(subscribers):
-        asset = user_assets.get(user_id)
-        if not asset:
+        asset_name = user_assets.get(user_id)
+        if not asset_name:
             continue
-        prices = get_binance_prices(asset) if "USDT" in asset else get_alpha_prices(asset)
+
+        ticker = asset_map[asset_name]
+
+        # Binance = Crypto (USDT alla fine), Alpha = Forex
+        if ticker.endswith("USDT"):
+            prices = get_binance_prices(ticker)
+        else:
+            prices = get_alpha_prices(ticker)
+
         signal = generate_signal(prices)
-        msg = format_message(asset, signal)
+        msg = format_message(asset_name, signal)
+
         try:
             await context.bot.send_message(chat_id=user_id, text=msg)
         except Exception as e:
             logging.error(f"Errore inviando a {user_id}: {e}")
 
-# ===== Main =====
-def main():
-    app = ApplicationBuilder().token(TOKEN).build()
+# ================== MAIN ================== #
+
+async def main():
+    app = Application.builder().token(TOKEN).build()
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Avvia il bot
-    app.run_polling()
+    # Segnali ogni 5 minuti
+    app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+
+    await app.run_polling(close_loop=False)
 
 if __name__ == "__main__":
-    main()
+    import asyncio
+    asyncio.run(main())
