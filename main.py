@@ -6,12 +6,13 @@ from datetime import datetime, timedelta
 import pytz
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
-    Application,
+    ApplicationBuilder,
     CommandHandler,
     CallbackQueryHandler,
     ContextTypes,
 )
 from dotenv import load_dotenv
+import asyncio
 
 # ================== CONFIG ================== #
 load_dotenv()
@@ -23,10 +24,10 @@ logging.basicConfig(
     level=logging.INFO
 )
 
+# ================== GLOBALS ================== #
 subscribers = set()
 user_assets = {}
 
-# ================== ASSET MAP ================== #
 asset_map = {
     "Bitcoin": "BTCUSDT",
     "Ethereum": "ETHUSDT",
@@ -148,16 +149,19 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
 
 # ================== MAIN ================== #
 async def main():
-    app = Application.builder().token(TOKEN).build()
+    app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # ✅ usa job_queue direttamente
-    app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
+    # ✅ Job queue funziona solo dopo initialize
+    await app.initialize()
+    app.job_queue.run_repeating(auto_broadcast, interval=300, first=5)
 
-    await app.run_polling()
+    # Avvia bot
+    await app.start()
+    await app.updater.start_polling()
+    await app.updater.idle()
 
 if __name__ == "__main__":
-    import asyncio
     asyncio.run(main())
