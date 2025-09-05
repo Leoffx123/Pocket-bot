@@ -111,6 +111,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         buttons.append(row)
 
     reply_markup = InlineKeyboardMarkup(buttons)
+
     await update.message.reply_text(
         "✅ Sei iscritto!\n\nScegli un asset 👇\nIl bot ti manderà segnali reali ogni 5 minuti.",
         reply_markup=reply_markup
@@ -141,17 +142,16 @@ async def auto_broadcast(context: ContextTypes.DEFAULT_TYPE):
             logging.error(f"Errore inviando a {user_id}: {e}")
 
 # ================== MAIN ================== #
-async def main():
+def main():
     app = Application.builder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    # Avvia polling + job queue
+    # qui la job_queue funziona perché lanciata dentro run_polling
     app.job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
-    await app.run_polling()
+    app.run_polling()
 
 if __name__ == "__main__":
-    import asyncio
-    asyncio.run(main())
+    main()
