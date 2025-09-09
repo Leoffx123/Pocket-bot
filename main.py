@@ -26,15 +26,24 @@ logging.basicConfig(
 subscribers = set()
 user_assets = {}
 
+# ================== ASSET MAP ================== #
 asset_map = {
     "Bitcoin": "BTCUSDT",
     "Ethereum": "ETHUSDT",
+    "Binance Coin": "BNBUSDT",
+    "Solana": "SOLUSDT",
+    "XRP": "XRPUSDT",
+    "Dogecoin": "DOGEUSDT",
+    "Cardano": "ADAUSDT",
+    "Litecoin": "LTCUSDT",
     "EUR/USD": "EURUSD",
     "GBP/USD": "GBPUSD",
     "USD/JPY": "USDJPY",
+    "GBP/JPY": "GBPJPY",
+    "EUR/JPY": "EURJPY",
 }
 
-# ================== FUNZIONI ================== #
+# ================== FUNZIONI DATI ================== #
 def get_binance_prices(symbol="BTCUSDT", limit=50):
     try:
         url = f"https://api.binance.com/api/v3/klines?symbol={symbol}&interval=1m&limit={limit}"
@@ -61,10 +70,13 @@ def get_alpha_prices(symbol="EURUSD", limit=50):
         return []
 
 def ema(prices, span):
-    k = 2 / (span + 1)
+    """Calcola EMA senza pandas"""
+    if not prices:
+        return []
+    alpha = 2 / (span + 1)
     ema_vals = [prices[0]]
-    for p in prices[1:]:
-        ema_vals.append(p * k + ema_vals[-1] * (1 - k))
+    for price in prices[1:]:
+        ema_vals.append((price - ema_vals[-1]) * alpha + ema_vals[-1])
     return ema_vals
 
 def generate_signal(prices: list):
@@ -94,7 +106,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     buttons, row = [], []
     for i, asset in enumerate(asset_map.keys(), start=1):
         row.append(InlineKeyboardButton(asset, callback_data=asset))
-        if i % 2 == 0:
+        if i % 3 == 0:
             buttons.append(row)
             row = []
     if row:
@@ -138,8 +150,8 @@ async def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CallbackQueryHandler(button))
 
-    job_queue = JobQueue()
-    job_queue.set_application(app)
+    # 🔥 JobQueue funziona così
+    job_queue = app.job_queue
     job_queue.run_repeating(auto_broadcast, interval=300, first=20)
 
     await app.run_polling()
